@@ -86,6 +86,12 @@ void SerializeCatalogStar(SerializeContext *ser, const CatalogStar &catalogStar,
 CatalogStar DeserializeCatalogStar(DeserializeContext *des, bool inclMagnitude, bool inclName) {
     CatalogStar result;
     result.spatial = DeserializeVec3(des);
+
+    decimal z = result.spatial.z;
+    if (z > 1.0) z = 1.0;
+    if (z < -1.0) z = -1.0;
+    result.dec = std::asin(z);
+
     if (inclMagnitude) {
         result.magnitude = DeserializePrimitive<decimal>(des);
     } else {

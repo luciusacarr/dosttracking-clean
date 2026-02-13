@@ -789,6 +789,7 @@ StarIdentifiers TrackingMode::Go(
 
     if (timeBetweenFrame <= 0) return identified; // Clearly we did not want to track(should be impossible to reach this).
 
+
     decimal expectedRa = lastRa + raVelocity*timeBetweenFrame;
     decimal expectedDec = lastDec + decVelocity*timeBetweenFrame;
     decimal expectedRoll = lastRoll + rollVelocity*timeBetweenFrame;
@@ -805,6 +806,7 @@ StarIdentifiers TrackingMode::Go(
     expectedDec = std::max(expectedDec, -DECIMAL_M_PI / 2.0);
     expectedDec = std::min(expectedDec, DECIMAL_M_PI / 2.0);
 
+
     Quaternion predictedQuat = SphericalToQuaternion(expectedRa, expectedDec, expectedRoll);
 
     Vec3 boresight = predictedQuat.Conjugate().Rotate({1.0, 0.0, 0.0});
@@ -816,23 +818,29 @@ StarIdentifiers TrackingMode::Go(
     decimal decMax = expectedDec + fov/1.9;
 
     const std::vector<uint16_t>& indices = GetSortedDecIndicesHelper(catalog);
-    auto comp = [&](uint16_t index, decimal targetDec) {
-        return catalog[index].dec < targetDec;
-    };
 
-    
-    auto itStart = std::lower_bound(indices.begin(), indices.end(), decMin, comp);
-    auto itEnd = std::upper_bound(itStart, indices.end(), decMax, comp);
 
-    
+    auto itStart = std::lower_bound(indices.begin(), indices.end(), decMin, 
+        [&](uint16_t index, decimal val) { return catalog[index].dec < val; });
+
+
+    auto itEnd = std::upper_bound(itStart, indices.end(), decMax, 
+        [&](decimal val, uint16_t index) { return val < catalog[index].dec; });
+
+    int i = 0;
     for (auto it = itStart; it != itEnd; ++it) {
 
         uint16_t catIndex = *it;
         const CatalogStar &catStar = catalog[catIndex];
 
         decimal dot = catStar.spatial * boresight;
+
         
-        if (dot > cosFovLimit) { 
+
+        if (dot > cosFovLimit) {
+            
+            std::cout << i++ << std::endl;
+
             Vec3 starBody = predictedQuat.Rotate(catStar.spatial);
 
             if (starBody.x <= DECIMAL(0.0)) continue;

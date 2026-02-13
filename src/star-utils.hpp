@@ -20,9 +20,9 @@ public:
      * @param name See ::name
      */
     CatalogStar(decimal raj2000, decimal dej2000, int magnitude, int name) :
-        spatial(SphericalToSpatial(raj2000, dej2000)), magnitude(magnitude), name(name) {
-            // Directly store declination
-            dec = dej2000;
+        spatial(SphericalToSpatial(DegToRad(raj2000), DegToRad(dej2000))), 
+        magnitude(magnitude), name(name) {
+            dec = DegToRad(dej2000); // Store as Radians
         }
 
     CatalogStar(Vec3 spatial, int magnitude, int name) :

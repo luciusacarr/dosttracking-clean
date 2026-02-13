@@ -1075,6 +1075,7 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
             StarIdentifiers trackedIds = trackingAlgorithm->Go(database.get(), *inputStars, result.catalog, *input.InputCamera());
 
+            std::cout << "IDS TRACKED: " << trackedIds.size() << "\n";
 
             if (trackedIds.size() >= 4) {
                 result.starIds = std::unique_ptr<StarIdentifiers>(new StarIdentifiers(std::move(trackedIds)));
