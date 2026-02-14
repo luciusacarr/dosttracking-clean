@@ -775,8 +775,6 @@ StarIdentifiers PyramidStarIdAlgorithm::Go(
 StarIdentifiers TrackingMode::Go(
     const unsigned char *, const Stars &stars, const Catalog &catalog, const Camera &camera) const {
 
-    // tracking vector ?
-    // trackingVector is the var name.
     StarIdentifiers identified;
 
     decimal lastRa = trackingVector[0];
@@ -787,8 +785,7 @@ StarIdentifiers TrackingMode::Go(
     decimal rollVelocity = trackingVector[5];
     decimal timeBetweenFrame = trackingVector[6];
 
-    if (timeBetweenFrame <= 0) return identified; // Clearly we did not want to track(should be impossible to reach this).
-
+    if (timeBetweenFrame <= 0) return identified;
 
     decimal expectedRa = lastRa + raVelocity*timeBetweenFrame;
     decimal expectedDec = lastDec + decVelocity*timeBetweenFrame;
@@ -802,77 +799,101 @@ StarIdentifiers TrackingMode::Go(
     expectedRoll = fmod(expectedRoll, 2 * DECIMAL_M_PI);
     if (expectedRoll < 0) expectedRoll += 2 * DECIMAL_M_PI;
 
-    // Clamp Dec to [-PI/2, PI/2] 
-    expectedDec = std::max(expectedDec, -DECIMAL_M_PI / 2.0);
-    expectedDec = std::min(expectedDec, DECIMAL_M_PI / 2.0);
 
+    expectedDec = std::max(expectedDec, -DECIMAL_M_PI / DECIMAL(2.0));
+    expectedDec = std::min(expectedDec, DECIMAL_M_PI / DECIMAL(2.0));
 
     Quaternion predictedQuat = SphericalToQuaternion(expectedRa, expectedDec, expectedRoll);
+    
 
-    Vec3 boresight = predictedQuat.Conjugate().Rotate({1.0, 0.0, 0.0});
-                
+    Vec3 boresight = predictedQuat.Conjugate().Rotate({DECIMAL(1.0), DECIMAL(0.0), DECIMAL(0.0)});
+    
     decimal fov = camera.Fov();
-    decimal cosFovLimit = DECIMAL_COS(fov * 1.2 / 2.0);
+    decimal cosFovLimit = DECIMAL_COS(fov * DECIMAL(1.2) / DECIMAL(2.0));
 
-    decimal decMin = expectedDec - fov/1.9;
-    decimal decMax = expectedDec + fov/1.9;
+
+    decimal pw = predictedQuat.real;
+    decimal px = predictedQuat.i;
+    decimal py = predictedQuat.j;
+    decimal pz = predictedQuat.k;
+
+    decimal p00 = DECIMAL(1.0) - DECIMAL(2.0)*py*py - DECIMAL(2.0)*pz*pz;
+    decimal p01 = DECIMAL(2.0)*px*py - DECIMAL(2.0)*pw*pz;
+    decimal p02 = DECIMAL(2.0)*px*pz + DECIMAL(2.0)*pw*py;
+    
+    decimal p10 = DECIMAL(2.0)*px*py + DECIMAL(2.0)*pw*pz;
+    decimal p11 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*pz*pz;
+    decimal p12 = DECIMAL(2.0)*py*pz - DECIMAL(2.0)*pw*px;
+    
+    decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py;
+    decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px;
+    decimal p22 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*py*py;
+
+    decimal decBuffer = fov * DECIMAL(0.8);
+    decimal decMin = std::max(expectedDec - decBuffer, -DECIMAL_M_PI / DECIMAL(2.0));
+    decimal decMax = std::min(expectedDec + decBuffer, DECIMAL_M_PI / DECIMAL(2.0));
 
     const std::vector<uint16_t>& indices = GetSortedDecIndicesHelper(catalog);
-
 
     auto itStart = std::lower_bound(indices.begin(), indices.end(), decMin, 
         [&](uint16_t index, decimal val) { return catalog[index].dec < val; });
 
-
     auto itEnd = std::upper_bound(itStart, indices.end(), decMax, 
         [&](decimal val, uint16_t index) { return val < catalog[index].dec; });
 
-    int i = 0;
-    for (auto it = itStart; it != itEnd; ++it) {
+    
+    std::vector<int> bestCatForObserved(stars.size(), -1);
+    std::vector<decimal> bestDistSqForObserved(stars.size(), DECIMAL(55.0));
 
+    
+    for (auto it = itStart; it != itEnd; ++it) {
         uint16_t catIndex = *it;
         const CatalogStar &catStar = catalog[catIndex];
 
-        decimal dot = catStar.spatial * boresight;
-
         
+        decimal dot = catStar.spatial.x * boresight.x +
+                      catStar.spatial.y * boresight.y +
+                      catStar.spatial.z * boresight.z;
 
         if (dot > cosFovLimit) {
-            
-            std::cout << i++ << std::endl;
 
-            Vec3 starBody = predictedQuat.Rotate(catStar.spatial);
+            // UNROLLED FAST ROTATION: World -> Camera
+            Vec3 starBody{
+                p00 * catStar.spatial.x + p01 * catStar.spatial.y + p02 * catStar.spatial.z,
+                p10 * catStar.spatial.x + p11 * catStar.spatial.y + p12 * catStar.spatial.z,
+                p20 * catStar.spatial.x + p21 * catStar.spatial.y + p22 * catStar.spatial.z
+            };
 
             if (starBody.x <= DECIMAL(0.0)) continue;
 
             Vec2 camCoords = camera.SpatialToCamera(starBody);
 
             if (camera.InSensor(camCoords)) {
-                decimal bestDistSq = DECIMAL(55.0); 
-                int bestIndex = -1;
-
+                
+                // Assign to the mathematically closest observed centroid
                 for (size_t j = 0; j < stars.size(); ++j) {
                     const Star &centroid = stars[j];
-
                     decimal dx = centroid.position.x - camCoords.x;
                     decimal dy = centroid.position.y - camCoords.y;
                     decimal distSq = dx*dx + dy*dy;
 
-                    if (distSq < bestDistSq) {
-                        bestDistSq = distSq;
-                        bestIndex = (int)j;
+                    if (distSq < bestDistSqForObserved[j]) {
+                        bestDistSqForObserved[j] = distSq;
+                        bestCatForObserved[j] = (int)catIndex;
                     }
-                }
-
-                if (bestIndex != -1) {
-                    identified.push_back(StarIdentifier(bestIndex, (int)catIndex));
                 }
             }
         }
     }
 
+    // STRICTLY PUSH UNIQUE MATCHES
+    for (size_t j = 0; j < stars.size(); ++j) {
+        if (bestCatForObserved[j] != -1) {
+            identified.push_back(StarIdentifier((int)j, bestCatForObserved[j]));
+        }
+    }
+
     return identified;
 }
-
 
 }

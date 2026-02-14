@@ -84,25 +84,19 @@ void SerializeCatalogStar(SerializeContext *ser, const CatalogStar &catalogStar,
  * @sa SerializeCatalogStar
  */
 CatalogStar DeserializeCatalogStar(DeserializeContext *des, bool inclMagnitude, bool inclName) {
-    CatalogStar result;
-    result.spatial = DeserializeVec3(des);
-
-    decimal z = result.spatial.z;
-    if (z > 1.0) z = 1.0;
-    if (z < -1.0) z = -1.0;
-    result.dec = std::asin(z);
+    Vec3 spatial = DeserializeVec3(des);
+    decimal magnitude = 0;
+    int16_t name = -1;
 
     if (inclMagnitude) {
-        result.magnitude = DeserializePrimitive<decimal>(des);
-    } else {
-        result.magnitude = -424242; // TODO, what to do about special values, since there's no good ones for ints.
+        magnitude = DeserializePrimitive<decimal>(des);
     }
     if (inclName) {
-        result.name = DeserializePrimitive<int16_t>(des);
-    } else {
-        result.name = -1;
+        name = DeserializePrimitive<int16_t>(des);
     }
-    return result;
+
+
+    return CatalogStar(spatial, (int)magnitude, (int)name);
 }
 
 /**

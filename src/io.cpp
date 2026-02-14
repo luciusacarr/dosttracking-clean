@@ -1071,11 +1071,11 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
         bool tracking_success = false;
 
+        
+
         if (this->tracking) {
 
             StarIdentifiers trackedIds = trackingAlgorithm->Go(database.get(), *inputStars, result.catalog, *input.InputCamera());
-
-            std::cout << "IDS TRACKED: " << trackedIds.size() << "\n";
 
             if (trackedIds.size() >= 4) {
                 result.starIds = std::unique_ptr<StarIdentifiers>(new StarIdentifiers(std::move(trackedIds)));
@@ -1112,6 +1112,8 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing. One reason this can happen: Setting a centroid algorithm and attitude algorithm, but no star-id algorithm -- that can't work because the input star-ids won't properly correspond to the output centroids!" << std::endl;
         exit(1);
     }
+
+    std::cout << this->tracking << " : " << result.starIdTimeNs << "\n";
 
     return result;
 }
