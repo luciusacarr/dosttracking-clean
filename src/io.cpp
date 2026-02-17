@@ -1041,8 +1041,6 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
             std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
 
-            std::cout << "Tracking Time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); << std::endl;
-
             if (ids_centroids.first.size() >= 4) {
                 
                 Stars unfilteredStars = ids_centroids.second;
