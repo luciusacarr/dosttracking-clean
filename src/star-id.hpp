@@ -75,7 +75,10 @@ private:
  */
 class TrackingMode final : public StarIdAlgorithm {
 public:
-    StarIdentifiers Go(const unsigned char *database, const Stars &, const Catalog &, const Camera &) const;
+    std::vector<std::pair<StarIdentifier, Vec2>> GetProjections(
+        const unsigned char *database, const Stars &stars, const Catalog &catalog, const Camera &camera) const;
+
+    StarIdentifiers Go(const unsigned char *database, const Stars &stars, const Catalog &catalog, const Camera &camera) const override;
     /**
      * @param tolerance Angular tolerance (Two inter-star distances are considered the same if within this many radians)
      * @param numFalseStars an estimate of the number of false stars in the whole celestial sphere
@@ -84,6 +87,9 @@ public:
      * @param maxMismatchProbability The maximum allowable probability for any star to be mis-id'd.
      * @param cutoff Maximum number of pyramids to iterate through before giving up.
      */
+
+
+
     TrackingMode(decimal tolerance, int numFalseStars, decimal maxMismatchProbability, long cutoff, std::vector<decimal> trackingVector)
         : tolerance(tolerance), numFalseStars(numFalseStars),
           maxMismatchProbability(maxMismatchProbability), cutoff(cutoff),

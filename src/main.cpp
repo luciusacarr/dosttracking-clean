@@ -53,8 +53,34 @@ static void DatabaseBuild(const DatabaseOptions &values) {
 static void PipelineRun(const PipelineOptions &values) {
     PipelineInputList input = GetPipelineInput(values);
     Pipeline pipeline = SetPipeline(values);
-    std::vector<PipelineOutput> outputs = pipeline.Go(input);
-    PipelineComparison(input, outputs, values);
+
+
+    const int iterations = 1000;
+    const int warmup = 50;
+    std::vector<double> timings;
+    timings.reserve(iterations);
+
+    // 2. Warm-up phase
+    for(int i = 0; i < warmup; ++i) {
+        volatile auto warm_output = pipeline.Go(input); 
+    }
+
+    // 3. Timing phase
+    for(int i = 0; i < iterations; ++i) {
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        std::vector<PipelineOutput> outputs = pipeline.Go(input);
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        timings.push_back(elapsed.count());
+    }
+
+    // 4. Analysis
+    double sum = std::accumulate(timings.begin(), timings.end(), 0.0);
+    std::cout << "Average execution time: " << sum / iterations << " ms" << std::endl;
+
+    //PipelineComparison(input, outputs, values);
 }
 
 // DO NOT DELETE
@@ -237,6 +263,8 @@ static int LostMain(int argc, char **argv) {
                     exit(1);
             }
         }
+
+
 
         lost::PipelineRun(pipelineOptions);
 

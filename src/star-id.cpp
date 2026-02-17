@@ -772,10 +772,10 @@ StarIdentifiers PyramidStarIdAlgorithm::Go(
 }
 
 
-StarIdentifiers TrackingMode::Go(
-    const unsigned char *, const Stars &stars, const Catalog &catalog, const Camera &camera) const {
+std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
+    const unsigned char *, const Stars &, const Catalog &catalog, const Camera &camera) const {
 
-    StarIdentifiers identified;
+    std::vector<std::pair<StarIdentifier,Vec2>> identified;
 
     decimal lastRa = trackingVector[0];
     decimal lastDec = trackingVector[1];
@@ -842,8 +842,8 @@ StarIdentifiers TrackingMode::Go(
         [&](decimal val, uint16_t index) { return val < catalog[index].dec; });
 
     
-    std::vector<int> bestCatForObserved(stars.size(), -1);
-    std::vector<decimal> bestDistSqForObserved(stars.size(), DECIMAL(55.0));
+    //std::vector<int> bestCatForObserved(stars.size(), -1);
+    //std::vector<decimal> bestDistSqForObserved(stars.size(), DECIMAL(55.0));
 
     
     for (auto it = itStart; it != itEnd; ++it) {
@@ -869,6 +869,11 @@ StarIdentifiers TrackingMode::Go(
             Vec2 camCoords = camera.SpatialToCamera(starBody);
 
             if (camera.InSensor(camCoords)) {
+
+
+                identified.push_back({StarIdentifier(-1, (int)catIndex), camCoords});
+
+                /*
                 
                 // Assign to the mathematically closest observed centroid
                 for (size_t j = 0; j < stars.size(); ++j) {
@@ -881,19 +886,24 @@ StarIdentifiers TrackingMode::Go(
                         bestDistSqForObserved[j] = distSq;
                         bestCatForObserved[j] = (int)catIndex;
                     }
-                }
+                }*/
             }
         }
     }
 
-    // STRICTLY PUSH UNIQUE MATCHES
+    /*// STRICTLY PUSH UNIQUE MATCHES
     for (size_t j = 0; j < stars.size(); ++j) {
         if (bestCatForObserved[j] != -1) {
             identified.push_back(StarIdentifier((int)j, bestCatForObserved[j]));
         }
-    }
+    }*/
 
     return identified;
+}
+
+
+StarIdentifiers TrackingMode::Go(const unsigned char *, const Stars &, const Catalog &, const Camera &) const {
+    return StarIdentifiers(); // Incorrect usage. Call ::GetProjections.
 }
 
 }

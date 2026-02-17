@@ -1021,82 +1021,132 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         result.catalog = input.GetCatalog();
     }
 
-    if (centroidAlgorithm && inputImage) {
-
-        // run centroiding, keeping track of the time it takes
-        std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
-
-        // TODO: we should probably modify Go to just take an image argument
-        Stars unfilteredStars = centroidAlgorithm->Go(inputImage->image, inputImage->width, inputImage->height);
-
-        std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
-        result.centroidingTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-
-        // MAGNITUDE FILTERING
-        int minMagnitude = centroidMinMagnitude;
-        if (centroidMinStars > 0
-            // don't need to filter if we don't even have that many stars
-            && centroidMinStars < (int)unfilteredStars.size()) {
-
-            Stars magSortedStars = unfilteredStars;
-            // sort descending
-            std::sort(magSortedStars.begin(), magSortedStars.end(), [](const Star &a, const Star &b) { return a.magnitude > b.magnitude; });
-            minMagnitude = std::max(minMagnitude, magSortedStars[centroidMinStars - 1].magnitude);
-        }
-        // determine the minimum magnitude according to sorted stars
-        Stars *filteredStars = new std::vector<Star>();
-        for (const Star &star : unfilteredStars) {
-            assert(star.magnitude >= 0); // catalog stars can have negative magnitude, but by our
-                                         // conventions, centroids shouldn't.
-            if (star.magnitude >= minMagnitude) {
-                filteredStars->push_back(star);
-            }
-        }
-        result.stars = std::unique_ptr<Stars>(filteredStars);
-        inputStars = filteredStars;
-
-        // any starid set up to this point needs to be discarded, because it's based on input
-        // centroids instead of our new centroids.
-        inputStarIds = NULL;
-        result.starIds = NULL;
-    } else if (centroidAlgorithm) {
-        std::cerr << "ERROR: Centroid algorithm specified, but no input image to run it on." << std::endl;
-        exit(1);
-    }
-
-    if (starIdAlgorithm && database && inputStars && input.InputCamera()) {
-
-        // TODO: don't copy the vector!
-        std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
-
-        bool tracking_success = false;
+    bool tracking_success = false;
 
         
 
-        if (this->tracking) {
+    if (this->tracking) {
 
-            StarIdentifiers trackedIds = trackingAlgorithm->Go(database.get(), *inputStars, result.catalog, *input.InputCamera());
+        std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
 
-            if (trackedIds.size() >= 4) {
-                result.starIds = std::unique_ptr<StarIdentifiers>(new StarIdentifiers(std::move(trackedIds)));
+        TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+
+        std::vector<std::pair<StarIdentifier, Vec2>> projections = trackMode->GetProjections(database.get(), *inputStars, result.catalog, *input.InputCamera());
+
+        if (projections.size() >= 4) {
+
+            // centroiding & id'ing phase!
+            WindowedCenterOfGravity windowedCog;
+            std::pair<StarIdentifiers, Stars> ids_centroids = windowedCog.Go(inputImage->image, inputImage->width, inputImage->height, projections);
+
+            std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
+
+            std::cout << "Tracking Time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(); << std::endl;
+
+            if (ids_centroids.first.size() >= 4) {
+                
+                Stars unfilteredStars = ids_centroids.second;
+
+                // MAGNITUDE FILTERING
+                int minMagnitude = centroidMinMagnitude;
+                if (centroidMinStars > 0
+                    // don't need to filter if we don't even have that many stars
+                    && centroidMinStars < (int)unfilteredStars.size()) {
+
+                    Stars magSortedStars = unfilteredStars;
+                    // sort descending
+                    std::sort(magSortedStars.begin(), magSortedStars.end(), [](const Star &a, const Star &b) { return a.magnitude > b.magnitude; });
+                    minMagnitude = std::max(minMagnitude, magSortedStars[centroidMinStars - 1].magnitude);
+                }
+                // determine the minimum magnitude according to sorted stars
+                StarIdentifiers filteredIds;
+                Stars *filteredStars = new std::vector<Star>();
+
+                for (size_t i = 0; i < ids_centroids.second.size(); ++i) {
+                    const Star &star = ids_centroids.second[i];
+                    if (star.magnitude >= minMagnitude) {
+                        filteredStars->push_back(star);
+                        // Map the new star index to the existing catalog ID
+                        filteredIds.push_back(StarIdentifier(filteredStars->size() - 1, ids_centroids.first[i].catalogIndex));
+                    }
+                }
+
+                result.stars = std::unique_ptr<Stars>(filteredStars);
+                inputStars = filteredStars;
+                result.starIds = std::unique_ptr<StarIdentifiers>(new StarIdentifiers(filteredIds));
+                inputStarIds = result.starIds.get();
                 tracking_success = true;
+
+
             }
         }
+    }
 
 
-        if (tracking_success == false) {
-            result.starIds = std::unique_ptr<StarIdentifiers>(new std::vector<StarIdentifier>(
-                starIdAlgorithm->Go(database.get(), *inputStars, result.catalog, *input.InputCamera())));
+    if (tracking_success == false) {
+        
+
+        if (centroidAlgorithm && inputImage) {
+
+            // run centroiding, keeping track of the time it takes
+            std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
+
+            // TODO: we should probably modify Go to just take an image argument
+            Stars unfilteredStars = centroidAlgorithm->Go(inputImage->image, inputImage->width, inputImage->height);
+
+            std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
+            result.centroidingTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+
+            // MAGNITUDE FILTERING
+            int minMagnitude = centroidMinMagnitude;
+            if (centroidMinStars > 0
+                // don't need to filter if we don't even have that many stars
+                && centroidMinStars < (int)unfilteredStars.size()) {
+
+                Stars magSortedStars = unfilteredStars;
+                // sort descending
+                std::sort(magSortedStars.begin(), magSortedStars.end(), [](const Star &a, const Star &b) { return a.magnitude > b.magnitude; });
+                minMagnitude = std::max(minMagnitude, magSortedStars[centroidMinStars - 1].magnitude);
+            }
+            // determine the minimum magnitude according to sorted stars
+            Stars *filteredStars = new std::vector<Star>();
+            for (const Star &star : unfilteredStars) {
+                assert(star.magnitude >= 0); // catalog stars can have negative magnitude, but by our
+                                            // conventions, centroids shouldn't.
+                if (star.magnitude >= minMagnitude) {
+                    filteredStars->push_back(star);
+                }
+            }
+            result.stars = std::unique_ptr<Stars>(filteredStars);
+            inputStars = filteredStars;
+
+            // any starid set up to this point needs to be discarded, because it's based on input
+            // centroids instead of our new centroids.
+            inputStarIds = NULL;
+            result.starIds = NULL;
+        } else if (centroidAlgorithm) {
+            std::cerr << "ERROR: Centroid algorithm specified, but no input image to run it on." << std::endl;
+            exit(1);
         }
 
+        if (starIdAlgorithm && database && inputStars && input.InputCamera()) {
 
-        std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
-        result.starIdTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+            // TODO: don't copy the vector!
+            std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
 
-        inputStarIds = result.starIds.get();
-    } else if (starIdAlgorithm) {
-        std::cerr << "ERROR: Star ID algorithm specified but cannot run because database, centroids, or camera are missing." << std::endl;
-        exit(1);
+
+            result.starIds = std::unique_ptr<StarIdentifiers>(new std::vector<StarIdentifier>(
+            starIdAlgorithm->Go(database.get(), *inputStars, result.catalog, *input.InputCamera())));
+
+
+            std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
+            result.starIdTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+
+            inputStarIds = result.starIds.get();
+        } else if (starIdAlgorithm) {
+            std::cerr << "ERROR: Star ID algorithm specified but cannot run because database, centroids, or camera are missing." << std::endl;
+            exit(1);
+        }
     }
 
     if (attitudeEstimationAlgorithm && inputStarIds && input.InputCamera()) {
@@ -1112,8 +1162,6 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing. One reason this can happen: Setting a centroid algorithm and attitude algorithm, but no star-id algorithm -- that can't work because the input star-ids won't properly correspond to the output centroids!" << std::endl;
         exit(1);
     }
-
-    std::cout << this->tracking << " : " << result.starIdTimeNs << "\n";
 
     return result;
 }
