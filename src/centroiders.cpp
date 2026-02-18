@@ -342,8 +342,6 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
     stack.reserve(windowSize * windowSize);
 
 
-    
-    uint32_t currentGen = 0;
 
     for (size_t i = 0; i < projections.size(); ++i) {
 

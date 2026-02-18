@@ -6,6 +6,8 @@
 #include "centroiders.hpp"
 #include "star-utils.hpp"
 #include "camera.hpp"
+#include "spatial-hash.hpp"
+#include "kalman-filter.hpp"
 
 namespace lost {
 
@@ -76,7 +78,11 @@ private:
 class TrackingMode final : public StarIdAlgorithm {
 public:
     std::vector<std::pair<StarIdentifier, Vec2>> GetProjections(
-        const unsigned char *database, const Stars &stars, const Catalog &catalog, const Camera &camera) const;
+            const unsigned char * database, 
+            const Stars & stars, 
+            const Catalog &catalog, 
+            const Camera &camera,
+            int &outWindowSize) const;
 
     StarIdentifiers Go(const unsigned char *database, const Stars &stars, const Catalog &catalog, const Camera &camera) const override;
     /**
@@ -88,6 +94,21 @@ public:
      * @param cutoff Maximum number of pyramids to iterate through before giving up.
      */
 
+     void UpdateTrackingVector(const std::vector<decimal>& newTvec) {
+        this->trackingVector = newTvec; 
+    }
+
+    void UpdateEKF(const Quaternion& measuredAttitude) {
+        ekf.Update(measuredAttitude);
+    }
+
+    void ResetEKF(const Quaternion& newGlobalFix) {
+        ekf.Reset(newGlobalFix);
+        isEkfInitialized = true;
+        missedFrames = 0;
+    }
+
+    int missedFrames = 0;
 
 
     TrackingMode(decimal tolerance, int numFalseStars, decimal maxMismatchProbability, long cutoff, std::vector<decimal> trackingVector)
@@ -100,6 +121,13 @@ private:
     decimal maxMismatchProbability;
     long cutoff;
     std::vector<decimal> trackingVector;
+
+
+    mutable SpatialHash spatialHash; 
+    mutable bool isSpatialHashBuilt = false;
+
+    mutable AttitudeEKF ekf;
+    mutable bool isEkfInitialized = false;
 };
 
 }

@@ -10,10 +10,11 @@
 #include "star-id-private.hpp"
 #include "databases.hpp"
 #include "attitude-utils.hpp"
+#include "spatial-hash.hpp" 
 
 namespace lost {
 
-const std::vector<uint16_t> &GetSortedDecIndicesHelper(const Catalog &catalog);
+
 
 StarIdentifiers DummyStarIdAlgorithm::Go(
     const unsigned char *, const Stars &stars, const Catalog &catalog, const Camera &) const {
@@ -773,45 +774,61 @@ StarIdentifiers PyramidStarIdAlgorithm::Go(
 
 
 std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
-    const unsigned char *, const Stars &, const Catalog &catalog, const Camera &camera) const {
+    const unsigned char *, const Stars &, const Catalog &catalog, const Camera &camera, int &outWindowSize) const {
 
     std::vector<std::pair<StarIdentifier,Vec2>> identified;
 
-    decimal lastRa = trackingVector[0];
-    decimal lastDec = trackingVector[1];
-    decimal lastRoll = trackingVector[2];
-    decimal raVelocity = trackingVector[3];
-    decimal decVelocity = trackingVector[4];
-    decimal rollVelocity = trackingVector[5];
     decimal timeBetweenFrame = trackingVector[6];
 
     if (timeBetweenFrame <= 0) return identified;
 
-    decimal expectedRa = lastRa + raVelocity*timeBetweenFrame;
-    decimal expectedDec = lastDec + decVelocity*timeBetweenFrame;
-    decimal expectedRoll = lastRoll + rollVelocity*timeBetweenFrame;
-
-    // Wrap RA
-    expectedRa = fmod(expectedRa, 2 * DECIMAL_M_PI);
-    if (expectedRa < 0) expectedRa += 2 * DECIMAL_M_PI;
-
-    // Wrap Roll
-    expectedRoll = fmod(expectedRoll, 2 * DECIMAL_M_PI);
-    if (expectedRoll < 0) expectedRoll += 2 * DECIMAL_M_PI;
+    if (!isEkfInitialized) {
+        decimal initRa = trackingVector[0];
+        decimal initDec = trackingVector[1];
+        decimal initRoll = trackingVector[2];
 
 
-    expectedDec = std::max(expectedDec, -DECIMAL_M_PI / DECIMAL(2.0));
-    expectedDec = std::min(expectedDec, DECIMAL_M_PI / DECIMAL(2.0));
+        initRa = fmod(initRa, 2.0 * DECIMAL_M_PI);
+        if (initRa < 0.0) initRa += 2.0 * DECIMAL_M_PI;
 
-    Quaternion predictedQuat = SphericalToQuaternion(expectedRa, expectedDec, expectedRoll);
-    
 
+        initRoll = fmod(initRoll, 2.0 * DECIMAL_M_PI);
+        if (initRoll < 0.0) initRoll += 2.0 * DECIMAL_M_PI;
+
+
+        initDec = std::max(initDec, -DECIMAL_M_PI / DECIMAL(2.0));
+        initDec = std::min(initDec, DECIMAL_M_PI / DECIMAL(2.0));
+
+
+        Quaternion initialAttitude = SphericalToQuaternion(initRa, initDec, initRoll);
+        
+        ekf.Reset(initialAttitude);
+        ekf.w = {trackingVector[3], trackingVector[4], trackingVector[5]};
+        isEkfInitialized = true;
+    }
+
+    ekf.Predict(timeBetweenFrame);
+
+
+    // a lot of the EKF code needs to be tested and understood to a greater degree, a lot of it is direct implementation of other papers.
+    decimal maxVariance = std::max({ekf.P[0][0], ekf.P[1][1], ekf.P[2][2]});
+    decimal angularUncertainty = std::sqrt(maxVariance);
+
+    decimal radPerPixel = camera.Fov() / (decimal)camera.XResolution();
+    int dynamicSize = std::ceil((angularUncertainty * 3.0) / radPerPixel);
+
+    outWindowSize = std::max(6, std::min(dynamicSize, 51));
+
+    if (outWindowSize % 2 == 0) outWindowSize++; // we need odd numbered sizes so a center exists.
+
+    Quaternion predictedQuat = ekf.q;
     Vec3 boresight = predictedQuat.Conjugate().Rotate({DECIMAL(1.0), DECIMAL(0.0), DECIMAL(0.0)});
     
     decimal fov = camera.Fov();
     decimal cosFovLimit = DECIMAL_COS(fov * DECIMAL(1.2) / DECIMAL(2.0));
 
 
+    // Faster matrix multiplication.
     decimal pw = predictedQuat.real;
     decimal px = predictedQuat.i;
     decimal py = predictedQuat.j;
@@ -828,26 +845,14 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
     decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py;
     decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px;
     decimal p22 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*py*py;
+    if (!isSpatialHashBuilt) {
+        spatialHash.Build(catalog);
+        isSpatialHashBuilt = true;
+    }
 
-    decimal decBuffer = fov * DECIMAL(0.8);
-    decimal decMin = std::max(expectedDec - decBuffer, -DECIMAL_M_PI / DECIMAL(2.0));
-    decimal decMax = std::min(expectedDec + decBuffer, DECIMAL_M_PI / DECIMAL(2.0));
+    std::vector<uint16_t> localCandidates = spatialHash.GetStarsNear(boresight);
 
-    const std::vector<uint16_t>& indices = GetSortedDecIndicesHelper(catalog);
-
-    auto itStart = std::lower_bound(indices.begin(), indices.end(), decMin, 
-        [&](uint16_t index, decimal val) { return catalog[index].dec < val; });
-
-    auto itEnd = std::upper_bound(itStart, indices.end(), decMax, 
-        [&](decimal val, uint16_t index) { return val < catalog[index].dec; });
-
-    
-    //std::vector<int> bestCatForObserved(stars.size(), -1);
-    //std::vector<decimal> bestDistSqForObserved(stars.size(), DECIMAL(55.0));
-
-    
-    for (auto it = itStart; it != itEnd; ++it) {
-        uint16_t catIndex = *it;
+    for (uint16_t catIndex : localCandidates) {
         const CatalogStar &catStar = catalog[catIndex];
 
         

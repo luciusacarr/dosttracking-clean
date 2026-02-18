@@ -59,8 +59,10 @@ public:
 
     Stars Go(unsigned char *image, int imageWidth, int imageHeight) const override;
 
-private:
     int windowSize = 15;
+
+private:
+    
     int threshold = 128;
 };
 

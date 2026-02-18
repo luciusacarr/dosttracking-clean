@@ -48,11 +48,6 @@ private:
 // use the environment variable LOST_BSC_PATH, or read from ./bright-star-catalog.tsv
 const Catalog &CatalogRead();
 
-//
-void SaveSortedDecIndices(const std::vector<uint16_t>& indices);
-bool LoadSortedDecIndices(std::vector<uint16_t>& indices);
-const std::vector<uint16_t> &GetSortedDecIndicesHelper(const Catalog &catalog);
-
 // Convert a cairo surface to array of grayscale bytes
 unsigned char *SurfaceToGrayscaleImage(cairo_surface_t *cairoSurface);
 cairo_surface_t *GrayscaleImageToSurface(const unsigned char *, const int width, const int height);
@@ -104,13 +99,6 @@ public:
     virtual const Image *InputImage() const { return NULL; };
     /// The catalog to which catalog indexes returned from other methods refer.
     virtual const Catalog &GetCatalog() const = 0;
-
-
-    /// Returns a sorted mapping of starIds.
-    virtual const std::vector<uint16_t> &GetSortedDecIndices() const {
-        return GetSortedDecIndicesHelper(GetCatalog());
-    }
-
 
 
     virtual const Stars *InputStars() const { return NULL; };

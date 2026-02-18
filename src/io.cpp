@@ -28,6 +28,7 @@
 #include "star-id.hpp"
 #include "star-utils.hpp"
 
+
 namespace lost {
 
 /// Create a PromptedOutputStream which will output to the given file.
@@ -126,58 +127,7 @@ const Catalog &CatalogRead() {
 #define DEFAULT_SDI_PATH "catalog_dec_index.bin"
 #endif
 
-/// Generates a sorted, by declination, mapping to star id. 
-/// Only used for tracking, small storage overhead.
-void SaveSortedDecIndices(const std::vector<uint16_t>& indices) {
-    std::ofstream ofs(DEFAULT_SDI_PATH, std::ios::binary);
-    if (!ofs) return;
 
-    // Write the size first so we know how much to read later
-    size_t size = indices.size();
-    ofs.write(reinterpret_cast<const char*>(&size), sizeof(size));
-
-    // Write the raw array data
-    ofs.write(reinterpret_cast<const char*>(indices.data()), size * sizeof(uint16_t));
-    ofs.close();
-}
-
-
-// Load the sorted mapping to star id.
-bool LoadSortedDecIndices(std::vector<uint16_t>& indices) {
-    std::ifstream ifs(DEFAULT_SDI_PATH, std::ios::binary);
-    if (!ifs) return false;
-
-    size_t size;
-    ifs.read(reinterpret_cast<char*>(&size), sizeof(size));
-
-    indices.resize(size);
-    ifs.read(reinterpret_cast<char*>(indices.data()), size * sizeof(uint16_t));
-    
-    ifs.close();
-    return true;
-}
-
-/// Global helper to manage the binary cache and sorting logic.
-/// This is called by the virtual method in PipelineInput.
-const std::vector<uint16_t> &GetSortedDecIndicesHelper(const Catalog &catalog) {
-    static std::map<const Catalog*, std::vector<uint16_t>> multiCatalogCache;
-    std::vector<uint16_t> &indices = multiCatalogCache[&catalog];
-
-    if (indices.empty()) {
-        // 1. Try to load from disk
-        if (!LoadSortedDecIndices(indices)) {
-            // 2. Sort manually if no binary exists
-            indices.resize(catalog.size());
-            std::iota(indices.begin(), indices.end(), 0);
-            std::sort(indices.begin(), indices.end(), [&](uint16_t a, uint16_t b) {
-                return catalog[a].dec < catalog[b].dec;
-            });
-            // 3. Save it for next time
-            SaveSortedDecIndices(indices);
-        }
-    }
-    return indices;
-}
 
 /// Convert a colored Cairo image surface into a row-major array of grayscale pixels.
 /// Result is allocated with new[]
@@ -1031,12 +981,19 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
         TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
 
-        std::vector<std::pair<StarIdentifier, Vec2>> projections = trackMode->GetProjections(database.get(), *inputStars, result.catalog, *input.InputCamera());
+        int dynamicWindowSize = 15; 
 
+        std::vector<std::pair<StarIdentifier, Vec2>> projections = trackMode->GetProjections(database.get(), *inputStars, result.catalog, *input.InputCamera(), dynamicWindowSize);
+
+
+        
         if (projections.size() >= 4) {
 
             // centroiding & id'ing phase!
             WindowedCenterOfGravity windowedCog;
+            windowedCog.windowSize = dynamicWindowSize;
+
+            
             std::pair<StarIdentifiers, Stars> ids_centroids = windowedCog.Go(inputImage->image, inputImage->width, inputImage->height, projections);
 
             std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
@@ -1156,6 +1113,44 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
         std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
         result.attitudeEstimationTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+
+        // This should be refactored into the tracking mode work so we don't have to redo this.
+        if (result.attitude != nullptr) {
+            if (this->tracking && tracking_success) {
+                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+                if (trackMode) {
+                    trackMode->UpdateEKF(result.attitude->GetQuaternion());
+                    trackMode->missedFrames = 0; 
+                }
+            }
+        } else {
+
+            if (this->tracking) {
+                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+                if (trackMode) {
+                    trackMode->missedFrames++; 
+                    
+                    // If we've been blind for too long, kill the tracker
+                    if (trackMode->missedFrames > 5) { 
+                        this->tracking = false; 
+                        tracking_success = false;
+                    }
+                }
+            }
+        }
+
+        if (!this->tracking && result.attitude != nullptr) {
+            
+            TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+            if (trackMode) {
+                trackMode->ResetEKF(result.attitude->GetQuaternion());
+                
+                this->tracking = true; 
+                tracking_success = true;
+            }
+        }
+
+
     } else if (attitudeEstimationAlgorithm) {
         std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing. One reason this can happen: Setting a centroid algorithm and attitude algorithm, but no star-id algorithm -- that can't work because the input star-ids won't properly correspond to the output centroids!" << std::endl;
         exit(1);
