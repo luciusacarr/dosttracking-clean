@@ -116,36 +116,41 @@ int LocalAnnulusThreshold(unsigned char *image, int width, int height, int px, i
 
     int exclusionRadius = halfWin / 2;
 
-    
-    auto processRegion = [&](int startX, int endX, int startY, int endY) {
-        
+
+    auto processChunk = [&](int startX, int endX, int rowOffset) {
         startX = std::max(0, startX);
         endX = std::min(width - 1, endX);
-        startY = std::max(0, startY);
-        endY = std::min(height - 1, endY);
-
-        for (int y = startY; y <= endY; ++y) {
-            int rowOffset = y * width; 
-            for (int x = startX; x <= endX; ++x) {
-                unsigned char val = image[rowOffset + x];
-                totalMag += val;
-                sq_totalMag += val * val;
-                count++;
-            }
+        for (int x = startX; x <= endX; ++x) {
+            unsigned char val = image[rowOffset + x];
+            totalMag += val;
+            sq_totalMag += val * val;
+            count++;
         }
     };
 
-    processRegion(px - halfWin, px + halfWin, 
-                  py - halfWin, py - exclusionRadius - 1);
 
-    processRegion(px - halfWin, px - exclusionRadius - 1, 
-                  py - exclusionRadius, py + exclusionRadius);
+    int topYStart = std::max(0, py - halfWin);
+    int topYEnd = std::min(height - 1, py - exclusionRadius - 1);
+    for (int y = topYStart; y <= topYEnd; ++y) {
+        processChunk(px - halfWin, px + halfWin, y * width);
+    }
 
-    processRegion(px + exclusionRadius + 1, px + halfWin, 
-                  py - exclusionRadius, py + exclusionRadius);
 
-    processRegion(px - halfWin, px + halfWin, 
-                  py + exclusionRadius + 1, py + halfWin);
+    int midYStart = std::max(0, py - exclusionRadius);
+    int midYEnd = std::min(height - 1, py + exclusionRadius);
+    for (int y = midYStart; y <= midYEnd; ++y) {
+        int rowOffset = y * width;
+
+        processChunk(px - halfWin, px - exclusionRadius - 1, rowOffset);
+        processChunk(px + exclusionRadius + 1, px + halfWin, rowOffset);
+    }
+
+
+    int botYStart = std::max(0, py + exclusionRadius + 1);
+    int botYEnd = std::min(height - 1, py + halfWin);
+    for (int y = botYStart; y <= botYEnd; ++y) {
+        processChunk(px - halfWin, px + halfWin, y * width);
+    }
 
     if (count == 0) return 0;
 
@@ -391,15 +396,15 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
 
 
 
-
+    std::vector<uint8_t> localVisited(windowSize * windowSize, 0);
 
     for (size_t i = 0; i < projections.size(); ++i) {
 
         const auto &proj = projections[i];
         
         StarIdentifier id = proj.first;
-        int px = std::round(proj.second.x);
-        int py = std::round(proj.second.y);
+        int px = static_cast<int>(proj.second.x + DECIMAL(0.5));
+        int py = static_cast<int>(proj.second.y + DECIMAL(0.5));
 
         int curr_threshold = LocalAnnulusThreshold(image, width, height, px, py, halfWin);
 
@@ -411,7 +416,7 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
         int boxWidth = endX - startX + 1;
         int boxHeight = endY - startY + 1;
 
-        std::vector<uint8_t> localVisited(boxWidth * boxHeight, 0);
+        std::fill(localVisited.begin(), localVisited.begin() + (boxWidth * boxHeight), 0);
         
         int seedX = -1, seedY = -1;
         unsigned char maxVal = 0;
@@ -447,7 +452,8 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
             
             int cx = curr.x;
             int cy = curr.y;
-            int currIdx = cy * width + cx;
+            int baseGlobalIdx = cy * width + cx;
+            int baseLocalIdx = (cy - startY) * boxWidth + (cx - startX);
             
             if (cx == 0 || cx == width - 1 || cy == 0 || cy == height - 1) {
                 isValid = false;
@@ -456,7 +462,7 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
             if (cx < xMin) xMin = cx; else if (cx > xMax) xMax = cx;
             if (cy < yMin) yMin = cy; else if (cy > yMax) yMax = cy;
             
-            unsigned char val = image[currIdx];
+            unsigned char val = image[baseGlobalIdx];
             
 
             uint32_t signal = val - curr_threshold; 
@@ -466,22 +472,43 @@ std::pair<StarIdentifiers, Stars> WindowedCenterOfGravity::Go(unsigned char *ima
             yCoordMagSum += cy * signal;
             pixelCount++;
             
-            const Point neighbors[4] = {
-                {cx + 1, cy}, {cx - 1, cy}, {cx, cy + 1}, {cx, cy - 1}
-            };
-            
-            for (int i = 0; i < 4; ++i) {
-                int nx = neighbors[i].x;
-                int ny = neighbors[i].y;
-                
-                if (nx < startX || nx > endX || ny < startY || ny > endY) continue;
-                
-                int localIdx = (ny - startY) * boxWidth + (nx - startX);
-                int globalIdx = ny * width + nx;
+            // 1. RIGHT (x + 1)
+            if (cx + 1 <= endX) {
+                int lIdx = baseLocalIdx + 1;
+                int gIdx = baseGlobalIdx + 1;
+                if (localVisited[lIdx] == 0 && image[gIdx] >= curr_threshold) {
+                    localVisited[lIdx] = 1;
+                    stack.push_back({cx + 1, cy});
+                }
+            }
 
-                if (localVisited[localIdx] == 0 && image[globalIdx] >= curr_threshold) {
-                    localVisited[localIdx] = 1;
-                    stack.push_back({nx, ny});
+            // 2. LEFT (x - 1)
+            if (cx - 1 >= startX) {
+                int lIdx = baseLocalIdx - 1;
+                int gIdx = baseGlobalIdx - 1;
+                if (localVisited[lIdx] == 0 && image[gIdx] >= curr_threshold) {
+                    localVisited[lIdx] = 1;
+                    stack.push_back({cx - 1, cy});
+                }
+            }
+
+            // 3. DOWN (y + 1)
+            if (cy + 1 <= endY) {
+                int lIdx = baseLocalIdx + boxWidth;
+                int gIdx = baseGlobalIdx + width;
+                if (localVisited[lIdx] == 0 && image[gIdx] >= curr_threshold) {
+                    localVisited[lIdx] = 1;
+                    stack.push_back({cx, cy + 1});
+                }
+            }
+
+            // 4. UP (y - 1)
+            if (cy - 1 >= startY) {
+                int lIdx = baseLocalIdx - boxWidth;
+                int gIdx = baseGlobalIdx - width;
+                if (localVisited[lIdx] == 0 && image[gIdx] >= curr_threshold) {
+                    localVisited[lIdx] = 1;
+                    stack.push_back({cx, cy - 1});
                 }
             }
         }
