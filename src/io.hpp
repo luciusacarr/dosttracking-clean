@@ -13,6 +13,7 @@
 #include <sstream>
 #include <iostream>
 #include <memory>
+#include <dirent.h>
 
 
 #ifndef CAIRO_HAS_PNG_FUNCTIONS
@@ -166,6 +167,8 @@ private:
 typedef std::vector<std::unique_ptr<PipelineInput>> PipelineInputList;
 
 PipelineInputList GetPipelineInput(const PipelineOptions &values);
+
+std::vector<std::string> GetImagesInDirectory(const std::string &directoryPath);
 
 /// A pipeline input created by reading a PNG from a file on disk.
 class PngPipelineInput : public PipelineInput {

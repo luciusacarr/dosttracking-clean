@@ -51,44 +51,33 @@ static void DatabaseBuild(const DatabaseOptions &values) {
 
 /// Run a star-tracking pipeline (possibly including generating inputs and analyzing outputs) based on command line options in \p values.
 static void PipelineRun(const PipelineOptions &values) {
-PipelineInputList input = GetPipelineInput(values);
+    PipelineInputList input = GetPipelineInput(values);
     Pipeline pipeline = SetPipeline(values);
 
-    std::cout << "--- WARMUP PHASE ---" << std::endl;
-    // Frame 1: Triggers the lazy-initialization of the Spatial Hash.
-    // Frames 2-5: Pulls the active 3D grid bins into the CPU's L1/L2 cache.
-    for (int i = 0; i < 5; ++i) {
-        pipeline.Go(input);
+    if (values.imageDir != "") {
+        std::vector<std::string> validFiles = GetImagesInDirectory(values.imageDir);
+
+        if (validFiles.size() == 0) {
+            std::cerr << "No valid PNG files found in directory " << values.imageDir << "... terminating." << std::endl;
+            exit(1);
+        }
+
+        for (const std::string& filename : validFiles) {
+            PipelineOptions workingValues = values; 
+
+            workingValues.png = values.imageDir + "/" + filename;
+
+            PipelineInputList input = GetPipelineInput(workingValues);
+            
+            std::vector<PipelineOutput> outputs = pipeline.Go(input);
+            PipelineComparison(input, outputs, values);
+        }
+    } else {
+        PipelineInputList input = GetPipelineInput(values);
+        std::vector<PipelineOutput> outputs = pipeline.Go(input);
+
+        PipelineComparison(input, outputs, values);
     }
-
-    std::cout << "--- BENCHMARK PHASE ---" << std::endl;
-    const int NUM_RUNS = 1000;
-    
-    // Start the stopwatch
-    auto start_time = std::chrono::steady_clock::now();
-
-    // Run the high-speed tracking loop
-    for (int i = 0; i < NUM_RUNS; ++i) {
-        pipeline.Go(input);
-    }
-
-    // Stop the stopwatch
-    auto end_time = std::chrono::steady_clock::now();
-
-    // Calculate total and average durations
-    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-    auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-    
-    double avg_us_per_frame = static_cast<double>(total_us) / NUM_RUNS;
-    double max_fps = 1000000.0 / avg_us_per_frame;
-
-    std::cout << "Total time for " << NUM_RUNS << " frames: " << total_ms << " ms" << std::endl;
-    std::cout << "Average time per frame: " << avg_us_per_frame << " µs" << std::endl;
-    std::cout << "Max achievable framerate: " << max_fps << " FPS\n" << std::endl;
-
-    // Run the comparison on the final output just to verify the math didn't break
-    std::vector<PipelineOutput> final_output = pipeline.Go(input);
-    PipelineComparison(input, final_output, values);
 }
 
 // DO NOT DELETE

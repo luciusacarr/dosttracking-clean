@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include <vector>
 #include <string>
@@ -21,12 +22,14 @@
 #include <map>
 #include <chrono>
 
+
 #include "attitude-estimators.hpp"
 #include "attitude-utils.hpp"
 #include "databases.hpp"
 #include "decimal.hpp"
 #include "star-id.hpp"
 #include "star-utils.hpp"
+
 
 
 namespace lost {
@@ -407,6 +410,21 @@ PipelineInputList GetPngPipelineInput(const PipelineOptions &values) {
 
 
     return result;
+}
+
+std::vector<std::string> GetImagesInDirectory(const std::string &directoryPath) {
+    DIR *dir; struct dirent *ent;
+    std::vector<std::string> validFiles;
+    if ((dir = opendir(directoryPath.c_str())) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            std::string filename = ent->d_name;
+            if (filename.length() >= 4 && filename.substr(filename.length() - 4) == ".png") validFiles.push_back(filename);
+        }
+        closedir(dir);
+    }
+    std::sort(validFiles.begin(), validFiles.end());
+
+    return validFiles;
 }
 
 // AstrometryPipelineInput::AstrometryPipelineInput(const std::string &path) {
@@ -904,13 +922,8 @@ Pipeline SetPipeline(const PipelineOptions &values) {
     }
 
     if (values.trackingMode) {
-            std::vector<decimal> tvec = {
-                DegToRad(values.lastRa), 
-                DegToRad(values.lastDec), 
-                DegToRad(values.lastRoll),
-                DegToRad(values.raVelocity), 
-                DegToRad(values.decVelocity), 
-                DegToRad(values.rollVelocity),
+            std::pair<Quaternion, decimal> tvec = {
+                Quaternion(),
                 values.timeBetweenFrame
             };
 
@@ -977,7 +990,6 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
     if (this->tracking) {
 
-        std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
 
         TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
 
@@ -985,18 +997,13 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
         std::vector<std::pair<StarIdentifier, Vec2>> projections = trackMode->GetProjections(database.get(), *inputStars, result.catalog, *input.InputCamera(), dynamicWindowSize);
 
-
-        
         if (projections.size() >= 4) {
 
             // centroiding & id'ing phase!
             WindowedCenterOfGravity windowedCog;
             windowedCog.windowSize = dynamicWindowSize;
 
-            
             std::pair<StarIdentifiers, Stars> ids_centroids = windowedCog.Go(inputImage->image, inputImage->width, inputImage->height, projections);
-
-            std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
 
             if (ids_centroids.first.size() >= 4) {
                 
@@ -1021,7 +1028,7 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
                     const Star &star = ids_centroids.second[i];
                     if (star.magnitude >= minMagnitude) {
                         filteredStars->push_back(star);
-                        // Map the new star index to the existing catalog ID
+
                         filteredIds.push_back(StarIdentifier(filteredStars->size() - 1, ids_centroids.first[i].catalogIndex));
                     }
                 }
@@ -1114,47 +1121,40 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
         result.attitudeEstimationTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
-        // This should be refactored into the tracking mode work so we don't have to redo this.
-        if (result.attitude != nullptr) {
-            if (this->tracking && tracking_success) {
-                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
-                if (trackMode) {
-                    trackMode->UpdateEKF(result.attitude->GetQuaternion());
-                    trackMode->missedFrames = 0; 
-                }
-            }
-        } else {
 
-            if (this->tracking) {
-                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
-                if (trackMode) {
-                    trackMode->missedFrames++; 
-                    
-                    // If we've been blind for too long, kill the tracker
-                    if (trackMode->missedFrames > 5) { 
-                        this->tracking = false; 
-                        tracking_success = false;
-                    }
-                }
-            }
-        }
-
-        if (!this->tracking && result.attitude != nullptr) {
-            
+        // State machine work.
+        if (result.attitude != nullptr && result.attitude->IsKnown()) { 
             TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
             if (trackMode) {
-                trackMode->ResetEKF(result.attitude->GetQuaternion());
+                // Determine if this is an EKF Update or a Pyramid Recovery
+                if (this->tracking && tracking_success) {
+                    trackMode->UpdateEKF(result.attitude->GetQuaternion());
+                } else {
+                    // We just recovered from being Lost in Space! Wipe the stale filter.
+                    trackMode->ResetEKF(result.attitude->GetQuaternion());
+                }
                 
-                this->tracking = true; 
+                trackMode->missedFrames = 0;
+                this->tracking = true; // Ensure next frame uses Spatial Hash
                 tracking_success = true;
             }
+        } else if (this->tracking) {
+            // Attitude failed, but we were in tracking mode. Coast blind!
+            TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+            if (trackMode) {
+                trackMode->missedFrames++; 
+                if (trackMode->missedFrames > 5) { 
+                    // Too many dropped frames. Kill tracking for next frame.
+                    this->tracking = false; 
+                    tracking_success = false;
+                }
+            }
         }
-
-
     } else if (attitudeEstimationAlgorithm) {
-        std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing. One reason this can happen: Setting a centroid algorithm and attitude algorithm, but no star-id algorithm -- that can't work because the input star-ids won't properly correspond to the output centroids!" << std::endl;
+        std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing..." << std::endl;
         exit(1);
     }
+
 
     return result;
 }

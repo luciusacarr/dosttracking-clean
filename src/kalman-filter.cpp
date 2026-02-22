@@ -26,9 +26,9 @@ AttitudeEKF::AttitudeEKF() {
     for (int i = 0; i < 3; ++i) {
         P[i][i] = 1.0;       // High initial attitude uncertainty
         P[i+3][i+3] = 1.0;   // High initial velocity uncertainty
-        Q[i][i] = 1e-5;      // Small attitude process noise
-        Q[i+3][i+3] = 1e-4;  // Velocity process noise (tumble variation)
-        R[i][i] = 1e-4;      // Tracker measurement noise (pixel/lens error)
+        Q[i][i] = 1e-4;      // Small attitude process noise
+        Q[i+3][i+3] = 1e-3;  // Velocity process noise (tumble variation)
+        R[i][i] = 1e-6;      // Tracker measurement noise (pixel/lens error)
     }
 }
 
@@ -199,16 +199,29 @@ void AttitudeEKF::Update(const Quaternion& q_measured) {
 
 
     Mat6 P_new = {0};
+
     for (int i = 0; i < 6; ++i) {
         for (int j = 0; j < 6; ++j) {
-            decimal correction = 0;
-            for (int k = 0; k < 3; ++k) {
-                correction += K[i][k] * P[k][j];
-            }
-            P_new[i][j] = P[i][j] - correction;
+            
+
+            decimal updated_value = P[i][j]; 
+
+            updated_value -= (K[i][0] * P[0][j] + 
+                              K[i][1] * P[1][j] + 
+                              K[i][2] * P[2][j]);
+            
+            P_new[i][j] = updated_value;
         }
     }
-    P = P_new;
+
+    for (int i = 0; i < 6; ++i) {
+        for (int j = i; j < 6; ++j) {
+            P[i][j] = (P_new[i][j] + P_new[j][i]) * 0.5;
+            P[j][i] = P[i][j];
+        }
+    }
+
+    //std::cout << "P[0][0] after update: " << P[0][0] << std::endl;
 }
 
 } 
