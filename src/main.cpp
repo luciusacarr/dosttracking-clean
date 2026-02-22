@@ -51,7 +51,6 @@ static void DatabaseBuild(const DatabaseOptions &values) {
 
 /// Run a star-tracking pipeline (possibly including generating inputs and analyzing outputs) based on command line options in \p values.
 static void PipelineRun(const PipelineOptions &values) {
-    PipelineInputList input = GetPipelineInput(values);
     Pipeline pipeline = SetPipeline(values);
 
     if (values.imageDir != "") {

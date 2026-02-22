@@ -785,22 +785,24 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
 
     if (!isEkfInitialized) {
         ekf.Reset(trackingVector.first);
-        ekf.w = {0,0,0}; // f user inputs non-zero we should let them but.. thats a lot of work? deal with it later:)
+        ekf.w = {0,0,0}; // idk if user inputs non-zero we should let them but whatever man :yawn:
         isEkfInitialized = true;
     }
 
     ekf.Predict(timeBetweenFrame);
 
+
+
     decimal maxVariance = std::max({ekf.P[0][0], ekf.P[1][1], ekf.P[2][2]});
 
-    decimal angularUncertainty = std::sqrt(maxVariance / 10.0); // the /10 could be stupid
+    decimal angularUncertainty = std::sqrt(maxVariance / 20.0); 
 
     decimal radPerPixel = camera.Fov() / (decimal)camera.XResolution();
     int dynamicSize = std::ceil((angularUncertainty * 3.0) / radPerPixel);
 
     outWindowSize = std::max(8, std::min(dynamicSize, 51));
 
-    if (outWindowSize % 2 == 0) outWindowSize++; // we need odd numbered sizes so a center exists.
+    if (outWindowSize % 2 == 0) outWindowSize++; 
 
     Quaternion predictedQuat = ekf.q;
     Vec3 boresight = predictedQuat.Conjugate().Rotate({DECIMAL(1.0), DECIMAL(0.0), DECIMAL(0.0)});
@@ -808,8 +810,6 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
     decimal fov = camera.Fov();
     decimal cosFovLimit = DECIMAL_COS(fov * DECIMAL(1.2) / DECIMAL(2.0));
 
-
-    // Faster matrix multiplication.
     decimal pw = predictedQuat.real;
     decimal px = predictedQuat.i;
     decimal py = predictedQuat.j;
@@ -817,15 +817,15 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
     
 
     decimal p00 = DECIMAL(1.0) - DECIMAL(2.0)*py*py - DECIMAL(2.0)*pz*pz;
-    decimal p01 = DECIMAL(2.0)*px*py - DECIMAL(2.0)*pw*pz; // Was +
-    decimal p02 = DECIMAL(2.0)*px*pz + DECIMAL(2.0)*pw*py; // Was -
+    decimal p01 = DECIMAL(2.0)*px*py - DECIMAL(2.0)*pw*pz;
+    decimal p02 = DECIMAL(2.0)*px*pz + DECIMAL(2.0)*pw*py;
     
-    decimal p10 = DECIMAL(2.0)*px*py + DECIMAL(2.0)*pw*pz; // Was -
+    decimal p10 = DECIMAL(2.0)*px*py + DECIMAL(2.0)*pw*pz;
     decimal p11 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*pz*pz;
-    decimal p12 = DECIMAL(2.0)*py*pz - DECIMAL(2.0)*pw*px; // Was +
+    decimal p12 = DECIMAL(2.0)*py*pz - DECIMAL(2.0)*pw*px;
     
-    decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py; // Was +
-    decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px; // Was -
+    decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py;
+    decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px;
     decimal p22 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*py*py;
 
     if (!isSpatialHashBuilt) {
@@ -838,7 +838,7 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
     for (uint16_t catIndex : localCandidates) {
         const CatalogStar &catStar = catalog[catIndex];
 
-        // if (catStar.magnitude > cutoff) continue; -- Want to test to make sure this is functional before pushing to it to main lol
+        // if (catStar.magnitude > cutoff) continue; not tested.
 
         
         decimal dot = catStar.spatial.x * boresight.x +
@@ -862,9 +862,11 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
 
                 identified.push_back({StarIdentifier(-1, (int)catIndex), camCoords});
 
+
             }
         }
     }
+
 
 
     return identified;
