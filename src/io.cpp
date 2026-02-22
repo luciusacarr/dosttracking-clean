@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include <vector>
 #include <string>
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <map>
 #include <chrono>
+
 
 #include "attitude-estimators.hpp"
 #include "attitude-utils.hpp"
@@ -271,6 +273,45 @@ void SurfacePlot(std::string description,
     cairo_destroy(cairoCtx);
 }
 
+// function to update the file /fakestars.tsv with random stars for testing
+void UpdateFakeStarsFile(const std::string& fakestarsPath, int falseStarMinMagnitude, int falseStarMaxMagnitude) {
+    const int n_start = 9110;
+    // seed with a real random value, if available
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis_num_stars(1, 100000);
+    int num_new_stars = dis_num_stars(gen);
+
+    std::default_random_engine *rng = new std::default_random_engine(std::chrono::system_clock::now().time_since_epoch().count());
+
+
+
+    std::ofstream f(fakestarsPath, std::ofstream::trunc);
+    if (!f.is_open()) {
+        std::cerr << "Error opening fakestars file for writing." << std::endl;
+        return;
+    }
+
+    std::uniform_real_distribution<decimal> uniformDistribution(DECIMAL(0.0), DECIMAL(1.0));
+    std::uniform_int_distribution<int> magnitudeDistribution(falseStarMaxMagnitude, falseStarMinMagnitude);
+
+    for (int i = 0; i < num_new_stars; ++i) {
+        decimal ra = uniformDistribution(*rng) * 360.0;
+        decimal dec = uniformDistribution(*rng) * 180.0 - 90.0;
+        decimal mag = magnitudeDistribution(*rng);
+        int id = n_start + i;
+
+        f << std::fixed;
+        f.precision(6);
+        f << ra << "|" << dec << "|" << id << "| |";
+        f.precision(2);
+        f << mag << "\n";
+    }
+
+    f.close();
+    std::cout << "Cleared old data and wrote " << num_new_stars << " new stars to " << fakestarsPath << "." << std::endl;
+}
+
 // ALGORITHM PROMPTERS
 typedef CentroidAlgorithm *(*CentroidAlgorithmFactory)();
 typedef StarIdAlgorithm *(*StarIdAlgorithmFactory)();
@@ -391,7 +432,7 @@ PipelineInputList GetPngPipelineInput(const PipelineOptions &values) {
     std::string pngPath = values.png;
 
     cairoSurface = cairo_image_surface_create_from_png(pngPath.c_str());
-    std::cerr << "PNG Read status: " << cairo_status_to_string(cairo_surface_status(cairoSurface)) << std::endl;
+    //std::cerr << "PNG Read status: " << cairo_status_to_string(cairo_surface_status(cairoSurface)) << std::endl;
     if (cairoSurface == NULL || cairo_surface_status(cairoSurface) != CAIRO_STATUS_SUCCESS) {
         exit(1);
     }
@@ -407,6 +448,21 @@ PipelineInputList GetPngPipelineInput(const PipelineOptions &values) {
 
 
     return result;
+}
+
+std::vector<std::string> GetImagesInDirectory(const std::string &directoryPath) {
+    DIR *dir; struct dirent *ent;
+    std::vector<std::string> validFiles;
+    if ((dir = opendir(directoryPath.c_str())) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            std::string filename = ent->d_name;
+            if (filename.length() >= 4 && filename.substr(filename.length() - 4) == ".png") validFiles.push_back(filename);
+        }
+        closedir(dir);
+    }
+    std::sort(validFiles.begin(), validFiles.end());
+
+    return validFiles;
 }
 
 // AstrometryPipelineInput::AstrometryPipelineInput(const std::string &path) {
@@ -904,13 +960,8 @@ Pipeline SetPipeline(const PipelineOptions &values) {
     }
 
     if (values.trackingMode) {
-            std::vector<decimal> tvec = {
-                DegToRad(values.lastRa), 
-                DegToRad(values.lastDec), 
-                DegToRad(values.lastRoll),
-                DegToRad(values.raVelocity), 
-                DegToRad(values.decVelocity), 
-                DegToRad(values.rollVelocity),
+            std::pair<Quaternion, decimal> tvec = {
+                Quaternion(),
                 values.timeBetweenFrame
             };
 
@@ -985,10 +1036,20 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
 
         std::vector<std::pair<StarIdentifier, Vec2>> projections = trackMode->GetProjections(database.get(), *inputStars, result.catalog, *input.InputCamera(), dynamicWindowSize);
 
+        //std::cout << "Projections: " << projections.size() << std::endl;
 
+        std::vector<TrackedStar> tStars;
+        for (std::pair<StarIdentifier, Vec2> proj : projections) {
+
+
+            tStars.push_back({proj.first,proj.second.x,proj.second.y,dynamicWindowSize});
+        }
+
+        result.trackedStars = tStars;
         
+        //std::cout << "windowss: " << tStars.size() << " window size: " << dynamicWindowSize << std::endl;
         if (projections.size() >= 4) {
-
+            //std::cout << "Starting centroiding & id'ing phase!" << std::endl;
             // centroiding & id'ing phase!
             WindowedCenterOfGravity windowedCog;
             windowedCog.windowSize = dynamicWindowSize;
@@ -997,6 +1058,8 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
             std::pair<StarIdentifiers, Stars> ids_centroids = windowedCog.Go(inputImage->image, inputImage->width, inputImage->height, projections);
 
             std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
+
+            //std::cout << "Centroiding & id'ing phase found: " << ids_centroids.first.size() << " stars." << std::endl;
 
             if (ids_centroids.first.size() >= 4) {
                 
@@ -1114,47 +1177,53 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         std::chrono::time_point<std::chrono::steady_clock> end = std::chrono::steady_clock::now();
         result.attitudeEstimationTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
-        // This should be refactored into the tracking mode work so we don't have to redo this.
-        if (result.attitude != nullptr) {
-            if (this->tracking && tracking_success) {
-                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
-                if (trackMode) {
-                    trackMode->UpdateEKF(result.attitude->GetQuaternion());
-                    trackMode->missedFrames = 0; 
-                }
-            }
-        } else {
 
-            if (this->tracking) {
-                TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
-                if (trackMode) {
-                    trackMode->missedFrames++; 
-                    
-                    // If we've been blind for too long, kill the tracker
-                    if (trackMode->missedFrames > 5) { 
-                        this->tracking = false; 
-                        tracking_success = false;
-                    }
-                }
-            }
-        }
-
-        if (!this->tracking && result.attitude != nullptr) {
-            
+        // --- THE STATE MACHINE HANDOFF ---
+        if (result.attitude != nullptr && result.attitude->IsKnown()) { 
             TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
             if (trackMode) {
-                trackMode->ResetEKF(result.attitude->GetQuaternion());
+                // Determine if this is an EKF Update or a Pyramid Recovery
+                if (this->tracking && tracking_success) {
+                    trackMode->UpdateEKF(result.attitude->GetQuaternion());
+                } else {
+                    // We just recovered from being Lost in Space! Wipe the stale filter.
+                    trackMode->ResetEKF(result.attitude->GetQuaternion());
+                }
                 
-                this->tracking = true; 
+                trackMode->missedFrames = 0;
+                this->tracking = true; // Ensure next frame uses Spatial Hash
                 tracking_success = true;
             }
+        } else if (this->tracking) {
+            // Attitude failed, but we were in tracking mode. Coast blind!
+            TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
+            if (trackMode) {
+                trackMode->missedFrames++; 
+                if (trackMode->missedFrames > 5) { 
+                    // Too many dropped frames. Kill tracking for next frame.
+                    this->tracking = false; 
+                    tracking_success = false;
+                }
+            }
         }
-
-
     } else if (attitudeEstimationAlgorithm) {
-        std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing. One reason this can happen: Setting a centroid algorithm and attitude algorithm, but no star-id algorithm -- that can't work because the input star-ids won't properly correspond to the output centroids!" << std::endl;
+        std::cerr << "ERROR: Attitude estimation algorithm set, but either star IDs or camera are missing..." << std::endl;
         exit(1);
     }
+
+
+
+    if (result.trackedStars.size() >= 4) {
+        StarIdentifiers *ids = new StarIdentifiers();
+        ids->reserve(result.trackedStars.size());
+                    
+        for (const auto& tracked : result.trackedStars) {
+            ids->push_back(tracked.id);
+        }
+
+        result.starIds = std::unique_ptr<StarIdentifiers>(ids);
+        inputStarIds = result.starIds.get();
+    } 
 
     return result;
 }

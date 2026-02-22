@@ -749,7 +749,7 @@ StarIdentifiers PyramidStarIdAlgorithm::Go(
 
                     if (iMatch != -1) {
                         std::cout.precision(6);
-                        std::cout << "Matched unique pyramid!" << std::endl << "Expected mismatches: " << std::scientific << expectedMismatches << std::endl << std::fixed;
+                        //std::cout << "Matched unique pyramid!" << std::endl << "Expected mismatches: " << std::scientific << expectedMismatches << std::endl << std::fixed;
                         identified.push_back(StarIdentifier(i, iMatch));
                         identified.push_back(StarIdentifier(j, jMatch));
                         identified.push_back(StarIdentifier(k, kMatch));
@@ -778,46 +778,29 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
 
     std::vector<std::pair<StarIdentifier,Vec2>> identified;
 
-    decimal timeBetweenFrame = trackingVector[6];
+    // tracking vector = {quat, seconds}
+    decimal timeBetweenFrame = trackingVector.second;
 
     if (timeBetweenFrame <= 0) return identified;
 
     if (!isEkfInitialized) {
-        decimal initRa = trackingVector[0];
-        decimal initDec = trackingVector[1];
-        decimal initRoll = trackingVector[2];
-
-
-        initRa = fmod(initRa, 2.0 * DECIMAL_M_PI);
-        if (initRa < 0.0) initRa += 2.0 * DECIMAL_M_PI;
-
-
-        initRoll = fmod(initRoll, 2.0 * DECIMAL_M_PI);
-        if (initRoll < 0.0) initRoll += 2.0 * DECIMAL_M_PI;
-
-
-        initDec = std::max(initDec, -DECIMAL_M_PI / DECIMAL(2.0));
-        initDec = std::min(initDec, DECIMAL_M_PI / DECIMAL(2.0));
-
-
-        Quaternion initialAttitude = SphericalToQuaternion(initRa, initDec, initRoll);
-        
-        ekf.Reset(initialAttitude);
-        ekf.w = {trackingVector[3], trackingVector[4], trackingVector[5]};
+        ekf.Reset(trackingVector.first);
+        ekf.w = {0,0,0}; // idk if user inputs non-zero we should let them but whatever man :yawn:
         isEkfInitialized = true;
     }
 
     ekf.Predict(timeBetweenFrame);
 
 
-    // a lot of the EKF code needs to be tested and understood to a greater degree, a lot of it is direct implementation of other papers.
+
     decimal maxVariance = std::max({ekf.P[0][0], ekf.P[1][1], ekf.P[2][2]});
-    decimal angularUncertainty = std::sqrt(maxVariance);
+
+    decimal angularUncertainty = std::sqrt(maxVariance / 20.0); // the /10 could be stupid
 
     decimal radPerPixel = camera.Fov() / (decimal)camera.XResolution();
     int dynamicSize = std::ceil((angularUncertainty * 3.0) / radPerPixel);
 
-    outWindowSize = std::max(6, std::min(dynamicSize, 51));
+    outWindowSize = std::max(8, std::min(dynamicSize, 51));
 
     if (outWindowSize % 2 == 0) outWindowSize++; // we need odd numbered sizes so a center exists.
 
@@ -833,18 +816,20 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
     decimal px = predictedQuat.i;
     decimal py = predictedQuat.j;
     decimal pz = predictedQuat.k;
+    
 
     decimal p00 = DECIMAL(1.0) - DECIMAL(2.0)*py*py - DECIMAL(2.0)*pz*pz;
-    decimal p01 = DECIMAL(2.0)*px*py - DECIMAL(2.0)*pw*pz;
-    decimal p02 = DECIMAL(2.0)*px*pz + DECIMAL(2.0)*pw*py;
+    decimal p01 = DECIMAL(2.0)*px*py - DECIMAL(2.0)*pw*pz; // Was +
+    decimal p02 = DECIMAL(2.0)*px*pz + DECIMAL(2.0)*pw*py; // Was -
     
-    decimal p10 = DECIMAL(2.0)*px*py + DECIMAL(2.0)*pw*pz;
+    decimal p10 = DECIMAL(2.0)*px*py + DECIMAL(2.0)*pw*pz; // Was -
     decimal p11 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*pz*pz;
-    decimal p12 = DECIMAL(2.0)*py*pz - DECIMAL(2.0)*pw*px;
+    decimal p12 = DECIMAL(2.0)*py*pz - DECIMAL(2.0)*pw*px; // Was +
     
-    decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py;
-    decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px;
+    decimal p20 = DECIMAL(2.0)*px*pz - DECIMAL(2.0)*pw*py; // Was +
+    decimal p21 = DECIMAL(2.0)*py*pz + DECIMAL(2.0)*pw*px; // Was -
     decimal p22 = DECIMAL(1.0) - DECIMAL(2.0)*px*px - DECIMAL(2.0)*py*py;
+
     if (!isSpatialHashBuilt) {
         spatialHash.Build(catalog);
         isSpatialHashBuilt = true;
@@ -854,6 +839,8 @@ std::vector<std::pair<StarIdentifier,Vec2>> TrackingMode::GetProjections(
 
     for (uint16_t catIndex : localCandidates) {
         const CatalogStar &catStar = catalog[catIndex];
+
+        if (catStar.magnitude > cutoff) continue;
 
         
         decimal dot = catStar.spatial.x * boresight.x +

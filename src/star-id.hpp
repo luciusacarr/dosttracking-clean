@@ -94,7 +94,7 @@ public:
      * @param cutoff Maximum number of pyramids to iterate through before giving up.
      */
 
-     void UpdateTrackingVector(const std::vector<decimal>& newTvec) {
+     void UpdateTrackingVector(const std::pair<Quaternion, decimal>& newTvec) {
         this->trackingVector = newTvec; 
     }
 
@@ -111,7 +111,8 @@ public:
     int missedFrames = 0;
 
 
-    TrackingMode(decimal tolerance, int numFalseStars, decimal maxMismatchProbability, long cutoff, std::vector<decimal> trackingVector)
+
+    TrackingMode(decimal tolerance, int numFalseStars, decimal maxMismatchProbability, long cutoff, std::pair<Quaternion, decimal> trackingVector)
         : tolerance(tolerance), numFalseStars(numFalseStars),
           maxMismatchProbability(maxMismatchProbability), cutoff(cutoff),
           trackingVector(trackingVector) { };
@@ -120,7 +121,7 @@ private:
     int numFalseStars;
     decimal maxMismatchProbability;
     long cutoff;
-    std::vector<decimal> trackingVector;
+    std::pair<Quaternion, decimal> trackingVector;
 
 
     mutable SpatialHash spatialHash; 

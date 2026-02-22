@@ -13,6 +13,7 @@
 #include <sstream>
 #include <iostream>
 #include <memory>
+#include <dirent.h>
 
 
 #ifndef CAIRO_HAS_PNG_FUNCTIONS
@@ -76,6 +77,8 @@ public:
 ////////////////////
 // PIPELINE INPUT //
 ////////////////////
+
+
 
 
 /// The command line options passed when running a pipeline
@@ -167,6 +170,8 @@ typedef std::vector<std::unique_ptr<PipelineInput>> PipelineInputList;
 
 PipelineInputList GetPipelineInput(const PipelineOptions &values);
 
+std::vector<std::string> GetImagesInDirectory(const std::string &directoryPath);
+
 /// A pipeline input created by reading a PNG from a file on disk.
 class PngPipelineInput : public PipelineInput {
 public:
@@ -183,6 +188,17 @@ private:
     const Catalog &catalog;
 };
 
+struct TrackedStar {
+    StarIdentifier id;
+    decimal projectedX;
+    decimal projectedY;
+    int size;
+};
+
+
+void UpdateFakeStarsFile(const std::string& fakestarsPath, int falseStarMinMagnitude = -2, int falseStarMaxMagnitude = 8);
+
+
 /////////////////////
 // PIPELINE OUTPUT //
 /////////////////////
@@ -195,6 +211,10 @@ struct PipelineOutput {
     std::unique_ptr<Stars> stars = nullptr;
     std::unique_ptr<StarIdentifiers> starIds = nullptr;
     std::unique_ptr<Attitude> attitude = nullptr;
+
+    // tracking mode fake star pos
+    // Changed type to StarIdentifiers to match usage in io.cpp
+    std::vector<TrackedStar> trackedStars;
 
     /// How many nanoseconds the centroiding stage of the pipeline took. Similarly for the other
     /// fields. If negative, the centroiding stage was not run.

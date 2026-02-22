@@ -90,3 +90,28 @@ LOST_CLI_OPTION("generate-perturb-centroids"  , decimal , generatePerturbationSt
 LOST_CLI_OPTION("generate-cutoff-mag"         , decimal , generateCutoffMag         , 6.0   , STR_TO_DECIMAL(optarg)    , kNoDefaultArgument)
 LOST_CLI_OPTION("generate-seed"               , int     , generateSeed              , 394859, atoi(optarg)    , kNoDefaultArgument)
 LOST_CLI_OPTION("generate-time-based-seed"    , bool    , timeSeed                  , false , atobool(optarg) , true)
+
+// DEBUG OPTIONS
+LOST_CLI_OPTION("roll-max" , decimal , rollMax  , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+LOST_CLI_OPTION("roll-min"   , decimal , rollMin   , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+
+LOST_CLI_OPTION("ra-max" , decimal , raMax , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+LOST_CLI_OPTION("ra-min"   , decimal , raMin   , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+
+LOST_CLI_OPTION("dec-max" , decimal , decMax , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+LOST_CLI_OPTION("dec-min"   , decimal , decMin   , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+
+LOST_CLI_OPTION("noise-max" , decimal , noiseStart , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+LOST_CLI_OPTION("noise-min"   , decimal , noiseEnd   , 0 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+
+LOST_CLI_OPTION("frames"  , decimal , frames  , 1 , STR_TO_DECIMAL(optarg) , kNoDefaultArgument)
+LOST_CLI_OPTION("panning"  , bool , panning  , false , atobool(optarg) , true)
+
+LOST_CLI_OPTION("brightness-limit"  , bool , brightnessLimit  , true , atobool(optarg) , true)
+LOST_CLI_OPTION("regen-false-db"  , bool , regenFalseDb  , false , atobool(optarg) , false)
+
+// could add regen options for mag,count,etc. but for now just regenerate everything with hard coded random limits
+
+LOST_CLI_OPTION("fake-database"  , std::string , fakeDatabase  , "" , optarg, kNoDefaultArgument)
+
+LOST_CLI_OPTION("image-dir"  , std::string , imageDir  , "" , optarg, kNoDefaultArgument)
