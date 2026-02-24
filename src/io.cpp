@@ -1126,20 +1126,20 @@ PipelineOutput Pipeline::Go(const PipelineInput &input) {
         if (result.attitude != nullptr && result.attitude->IsKnown()) { 
             TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
             if (trackMode) {
-                // Determine if this is an EKF Update or a Pyramid Recovery
+                // Is this an EKF Update or a LiS Recovery?
                 if (this->tracking && tracking_success) {
                     trackMode->UpdateEKF(result.attitude->GetQuaternion());
                 } else {
-                    // We just recovered from being Lost in Space! Wipe the stale filter.
+                    // We just recovered from being Lost in Space, wipe stale filter.
                     trackMode->ResetEKF(result.attitude->GetQuaternion());
                 }
                 
                 trackMode->missedFrames = 0;
-                this->tracking = true; // Ensure next frame uses Spatial Hash
+                this->tracking = true;
                 tracking_success = true;
             }
         } else if (this->tracking) {
-            // Attitude failed, but we were in tracking mode. Coast blind!
+            // Attitude failed, but we were in tracking mode. Attempt to coast.
             TrackingMode* trackMode = dynamic_cast<TrackingMode*>(trackingAlgorithm.get());
             if (trackMode) {
                 trackMode->missedFrames++; 
