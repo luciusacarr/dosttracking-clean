@@ -33,13 +33,12 @@ AttitudeEKF::AttitudeEKF() {
 }
 
 
-// Called when Lost-in-Space secures a fix after a blind-spot
+// Reset after a LiS drought. 
 void AttitudeEKF::Reset(const Quaternion& initial_attitude) {
     q = initial_attitude;
     w = {0.0, 0.0, 0.0}; // Assume zero velocity until proven otherwise
     
     // Blow up the covariance so the filter trusts the incoming measurements 
-    // heavily over the next few frames to quickly lock onto the true spin rate.
     for (int i = 0; i < 6; ++i) {
         for (int j = 0; j < 6; ++j) {
             P[i][j] = (i == j) ? 1.0 : 0.0; 
